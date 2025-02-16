@@ -4,61 +4,330 @@
     <meta charset="utf-8">
     <title>이미지 업스케일 & OCR</title>
     <style>
-        body { font-family: Arial, sans-serif; }
-        #thumbnails img { margin: 5px; border: 1px solid #ccc; }
+        body { 
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            margin-bottom: 30px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            align-items: center;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+
+        .file-input-wrapper input[type=file] {
+            font-size: 100px;
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            cursor: pointer;
+        }
+
+        .button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+
+        .button:hover:not(:disabled) {
+            background-color: #45a049;
+        }
+
+        .button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+
+        .loading-spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .button-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .progress-container {
+            margin-top: 20px;
+            display: none;
+        }
+
+        progress {
+            width: 100%;
+            height: 20px;
+            margin-right: 10px;
+        }
+
+        #thumbnails {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        #thumbnails img { 
+            width: 100%;
+            height: auto;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        #thumbnails img:hover {
+            transform: scale(1.05);
+        }
+
+        /* 모달 스타일 */
+        #modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+        }
+
+        #modal-content {
+            position: relative;
+            margin: auto;
+            top: 50%;
+            transform: translateY(-50%);
+            max-width: 90%;
+            max-height: 90vh;
+        }
+
+        #modal-content img {
+            max-width: 100%;
+            max-height: 90vh;
+            object-fit: contain;
+        }
+
+        #modal-close {
+            position: absolute;
+            top: -30px;
+            right: 0;
+            color: #fff;
+            font-size: 30px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+
     </style>
+            <!-- .loading-overlay {
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(255, 255, 255, 0.8);
+                z-index: 9999;
+                justify-content: center;
+                align-items: center;
+            }
+    
+            .loading-overlay .spinner {
+                width: 50px;
+                height: 50px;
+                border: 5px solid #f3f3f3;
+                border-top: 5px solid #3498db;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+            } -->
 </head>
 <body>
-    <h1>이미지 업스케일 및 대사 OCR 처리</h1>
-    <!-- webkitdirectory 속성으로 폴더 및 다중 파일 선택 지원 -->
-    <input type="file" id="fileInput" webkitdirectory multiple>
-    <button id="processBtn">이미지 처리 시작</button>
-    <div>
-        <progress id="progressBar" value="0" max="100"></progress>
-        <span id="progressText"></span>
+    <div class="container">
+        <div class="header">
+            <h1>이미지 업스케일 및 대사 OCR 처리</h1>
+        </div>
+
+        <div class="controls">
+            <div class="file-input-wrapper">
+                <button class="button" id="fileSelectBtn">
+                    <span class="button-content">
+                        <span class="loading-spinner" id="fileSpinner"></span>
+                        폴더 선택
+                    </span>
+                </button>
+                <input type="file" id="fileInput" webkitdirectory multiple>
+            </div>
+
+            <button class="button" id="processBtn">
+                <span class="button-content">
+                    <span class="loading-spinner" id="processSpinner"></span>
+                    이미지 처리 시작
+                </span>
+            </button>
+            <!-- 선택된 파일 수를 표시할 영역 -->
+            <div id="fileCount" style="margin-left: 20px; font-size: 16px; color: #333;"></div>
+        </div>
+
+        <div class="progress-container">
+            <progress id="progressBar" value="0" max="100"></progress>
+            <span id="progressText"></span>
+        </div>
+
+        <div id="thumbnails"></div>
     </div>
-    <div id="thumbnails"></div>
+
+    <!-- 모달 -->
+    <div id="modal">
+        <div id="modal-content">
+            <span id="modal-close">&times;</span>
+            <img id="fullImage" src="">
+        </div>
+    </div>
+
+    <!-- 로딩 오버레이 -->
+    <!-- <div class="loading-overlay">
+        <div class="spinner"></div>
+    </div> -->
 
     <script>
-        document.getElementById('processBtn').addEventListener('click', function() {
-            const input = document.getElementById('fileInput');
-            const files = input.files;
-            const progressBar = document.getElementById('progressBar');
-            const progressText = document.getElementById('progressText');
-            const thumbnailsDiv = document.getElementById('thumbnails');
+        const fullImageCache = {};
+        const modal = document.getElementById('modal');
+        const modalImg = document.getElementById('fullImage');
+        const modalClose = document.getElementById('modal-close');
+        const fileInput = document.getElementById('fileInput');
+        const processBtn = document.getElementById('processBtn');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const thumbnailsDiv = document.getElementById('thumbnails');
+        // const loadingOverlay = document.querySelector('.loading-overlay');
+        const fileSelectBtn = document.getElementById('fileSelectBtn');
+        const fileSpinner = document.getElementById('fileSpinner');
+        const processSpinner = document.getElementById('processSpinner');
+        const fileCount = document.getElementById('fileCount');
 
+        let isProcessing = false;
+
+        modalClose.onclick = function() {
+            modal.style.display = "none";
+        };
+
+        const setLoading = (loading) => {
+            isProcessing = loading;
+            // loadingOverlay.style.display = loading ? 'flex' : 'none';
+            fileInput.disabled = loading;
+            processBtn.disabled = loading;
+            fileSelectBtn.disabled = loading;
+            fileSpinner.style.display = loading ? 'block' : 'none';
+            processSpinner.style.display = loading ? 'block' : 'none';
+            document.querySelector('.progress-container').style.display = loading ? 'block' : 'none';
+        };
+
+        fileInput.addEventListener('change', function() {
+            const files = this.files;
+            if (files.length > 0) {
+                processBtn.disabled = false;
+            }
+            fileCount.textContent = `선택된 이미지 수: ${files.length}개`;
+        });
+
+        processBtn.addEventListener('click', async function() {
+            const files = fileInput.files;
             if (files.length === 0) {
                 alert("파일이나 폴더를 선택해주세요.");
                 return;
             }
+
+            setLoading(true);
             let processedCount = 0;
             progressBar.value = 0;
             progressText.textContent = `0 / ${files.length}`;
             thumbnailsDiv.innerHTML = "";
 
-            Array.from(files).forEach(file => {
-                let formData = new FormData();
-                formData.append("file", file);
-                fetch('/process', { method: 'POST', body: formData })
-                    .then(response => response.json())
-                    .then(data => {
-                        processedCount++;
-                        progressBar.value = (processedCount / files.length) * 100;
-                        progressText.textContent = `${processedCount} / ${files.length}`;
-                        if (data.thumbnail) {
-                            let img = document.createElement('img');
+            try {
+                for (const file of files) {
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    
+                    try {
+                        const response = await fetch('/process', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const data = await response.json();
+                        
+                        if (data.thumbnail && data.filename) {
+                            const img = document.createElement('img');
                             img.src = "data:image/jpeg;base64," + data.thumbnail;
+                            img.setAttribute("data-filename", data.filename);
+                            img.addEventListener('click', function() {
+                                const filename = this.getAttribute("data-filename");
+                                if (fullImageCache[filename]) {
+                                    modalImg.src = fullImageCache[filename];
+                                    modal.style.display = "block";
+                                } else {
+                                    fetch('/full/' + filename)
+                                        .then(resp => resp.blob())
+                                        .then(blob => {
+                                            const reader = new FileReader();
+                                            reader.onload = function() {
+                                                fullImageCache[filename] = reader.result;
+                                                modalImg.src = reader.result;
+                                                modal.style.display = "block";
+                                            };
+                                            reader.readAsDataURL(blob);
+                                        });
+                                }
+                            });
                             thumbnailsDiv.appendChild(img);
                         }
-                    })
-                    .catch(error => {
+                    } catch (error) {
                         console.error('파일 처리 중 에러:', error);
-                        processedCount++;
-                        progressBar.value = (processedCount / files.length) * 100;
-                        progressText.textContent = `${processedCount} / ${files.length}`;
-                    });
-            });
+                    }
+
+                    processedCount++;
+                    progressBar.value = (processedCount / files.length) * 100;
+                    progressText.textContent = `${processedCount} / ${files.length}`;
+                }
+            } finally {
+                setLoading(false);
+            }
         });
+
+        // 초기 상태 설정
+        processBtn.disabled = true;
     </script>
 </body>
 </html>

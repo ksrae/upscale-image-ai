@@ -1,7 +1,9 @@
 import sys
 import os
 import types
+import asyncio
 import torchvision.transforms.functional as F
+import cv2  # OpenCV 임포트
 
 # torchvision 패치
 if "torchvision.transforms.functional_tensor" not in sys.modules:
@@ -16,9 +18,28 @@ import pytesseract
 import numpy as np
 import io
 import base64
-import cv2  # OpenCV 임포트
 
-# 커스텀 RRDBNet 임포트
+# Tesseract 경로 설정 (Windows 예시)
+pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+# Flask 애플리케이션 설정
+app = Flask(__name__)
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+# 모델 파일 경로
+model_path = os.path.join(os.path.dirname(__file__), "RealESRGAN_x4plus.pth")
+if not os.path.exists(model_path):
+    raise FileNotFoundError(f"모델 파일 '{model_path}'을(를) 찾을 수 없습니다.")
+
+# 업스케일된 이미지를 저장할 폴더
+UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "upscales")
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+    print("'upscales' 폴더 생성됨")
+
+#############################################
+# 커스텀 RRDBNet 및 RealESRGANer 클래스 정의 #
+#############################################
 class ResidualDenseBlock(torch.nn.Module):
     def __init__(self, num_feat=64, num_grow_ch=32):
         super(ResidualDenseBlock, self).__init__()
@@ -76,24 +97,6 @@ class RRDBNet(torch.nn.Module):
         out = self.conv_last(feat)
         return out
 
-# Tesseract 경로 설정 (Windows 예시)
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
-# Flask 애플리케이션 설정
-app = Flask(__name__)
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-# 모델 파일 경로
-model_path = os.path.join(os.path.dirname(__file__), "RealESRGAN_x4plus.pth")
-if not os.path.exists(model_path):
-    raise FileNotFoundError(f"모델 파일 '{model_path}'을(를) 찾을 수 없습니다.")
-
-# 업스케일된 이미지를 저장할 폴더
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "upscales")
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-    print("'upscales' 폴더 생성됨")
-
 class RealESRGANer:
     def __init__(self, scale, model_path, device, half=False):
         self.scale = scale
@@ -142,83 +145,57 @@ class RealESRGANer:
 # 모델 초기화
 model = RealESRGANer(scale=4, model_path=model_path, device=device, half=False)
 
-def adaptive_threshold(img, window_size, c=2):
-    height, width = img.shape
-    result = np.zeros_like(img)
-    half_window = window_size // 2
-    padded_img = np.pad(img, half_window, mode='edge')
-    
-    for i in range(height):
-        for j in range(width):
-            window = padded_img[i:i+window_size, j:j+window_size]
-            threshold = np.mean(window) - c
-            result[i, j] = 255 if img[i, j] > threshold else 0
-    
-    return result
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@app.route('/full/<filename>')
-def full_image(filename):
-    return send_from_directory(UPLOAD_FOLDER, filename)
-
-@app.route('/process', methods=['POST'])
-def process_image():
+##########################################################
+# 동기 처리 함수: blocking 작업(이미지 로딩~썸네일 생성)  #
+##########################################################
+def process_image_sync(file):
     print("============ 이미지 처리 시작 ============")
     
+    # 파일 검증
     if 'file' not in request.files:
         print("오류: 파일이 업로드되지 않음")
-        return jsonify({'error': '파일이 업로드되지 않았습니다.'}), 400
+        return {'error': '파일이 업로드되지 않았습니다.'}
     
-    file = request.files['file']
     if file.filename == '':
         print("오류: 선택된 파일 없음")
-        return jsonify({'error': '선택된 파일이 없습니다.'}), 400
-
+        return {'error': '선택된 파일이 없습니다.'}
+    
     try:
         print("1. 원본 이미지 로딩 시작...")
         original_img = Image.open(file.stream).convert('RGB')
         print(f"   - 원본 이미지 크기: {original_img.size}")
     except Exception as e:
         print(f"오류: 이미지 로딩 실패 - {str(e)}")
-        return jsonify({'error': '유효하지 않은 이미지 파일입니다.'}), 400
-
+        return {'error': '유효하지 않은 이미지 파일입니다.'}
+    
     try:
-        print("2. 향상된 OCR 전처리 및 텍스트 추출 시작...")
-        # OpenCV로 전처리 진행
+        print("2. OCR 전처리 및 텍스트 추출 시작...")
+        # OpenCV 전처리 (OCR 처리용, 콘솔 로그 유지)
         ocr_cv = cv2.cvtColor(np.array(original_img), cv2.COLOR_RGB2GRAY)
-        # 노이즈 제거를 위한 GaussianBlur 적용
         ocr_cv = cv2.GaussianBlur(ocr_cv, (5, 5), 0)
-        # Otsu 이진화로 최적 임계값 적용
         _, ocr_cv = cv2.threshold(ocr_cv, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        # 모폴로지 연산으로 문자 선명화
         kernel = np.ones((3, 3), np.uint8)
         ocr_cv = cv2.morphologyEx(ocr_cv, cv2.MORPH_OPEN, kernel)
         ocr_cv = cv2.morphologyEx(ocr_cv, cv2.MORPH_CLOSE, kernel)
-        # PIL 이미지로 복원
         ocr_img = Image.fromarray(ocr_cv)
-        # OCR 수행 (dpi 옵션 포함)
         custom_config = r'--oem 3 --psm 6 --dpi 300 -c preserve_interword_spaces=1'
         ocr_data = pytesseract.image_to_data(ocr_img, lang='kor+eng', config=custom_config, output_type=pytesseract.Output.DICT)
         print("   - OCR 처리 완료")
     except Exception as e:
         print(f"오류: OCR 전처리/처리 실패 - {str(e)}")
         ocr_data = None
-
+    
     try:
         print("3. 이미지 업스케일링 시작...")
         upscaled_img, _ = model.enhance(original_img)
         print(f"   - 업스케일링 후 크기: {upscaled_img.size}")
     except Exception as e:
         print(f"오류: 업스케일링 실패 - {str(e)}")
-        return jsonify({'error': '이미지 업스케일링 실패'}), 500
-
+        return {'error': '이미지 업스케일링 실패'}
+    
     try:
         print("4. OCR 텍스트 오버레이 시작...")
         draw = ImageDraw.Draw(upscaled_img)
-        # 고화질 텍스트 출력을 위해 큰 폰트 사용 (scale factor에 따라 조정 가능)
         try:
             font = ImageFont.truetype("malgun.ttf", 24)
             print("   - 맑은 고딕 폰트 로드 성공")
@@ -230,7 +207,6 @@ def process_image():
                 font = ImageFont.load_default()
                 print("   - 기본 폰트 사용")
         
-        # 원본과 업스케일 이미지 사이의 scale factor 계산
         scale_factor_w = upscaled_img.width / original_img.width
         scale_factor_h = upscaled_img.height / original_img.height
         
@@ -243,20 +219,16 @@ def process_image():
                 except:
                     conf = 0
                 if text and conf > min_confidence:
-                    # OCR의 좌표를 업스케일 이미지 좌표로 변환
                     x = int(ocr_data['left'][i] * scale_factor_w)
                     y = int(ocr_data['top'][i] * scale_factor_h)
-                    # 고화질 텍스트 오버레이: 텍스트 외곽에 약간의 그림자 효과를 줘서 가독성 향상
-                    shadow_color = "black"
-                    text_color = "white"
-                    # 그림자 효과 (오프셋 적용)
+                    # 그림자 효과 적용 후 텍스트 출력 (경계선 없이)
                     offset = 1
-                    draw.text((x+offset, y+offset), text, font=font, fill=shadow_color)
-                    draw.text((x, y), text, font=font, fill=text_color)
+                    draw.text((x+offset, y+offset), text, font=font, fill="black")
+                    draw.text((x, y), text, font=font, fill="white")
         print("   - 텍스트 오버레이 완료")
     except Exception as e:
         print(f"오류: 텍스트 오버레이 실패 - {str(e)}")
-
+    
     try:
         print("5. 업스케일된 이미지 저장 시작...")
         filename = os.path.basename(file.filename)
@@ -266,8 +238,8 @@ def process_image():
         print(f"   - 저장 완료: {save_path}")
     except Exception as e:
         print(f"오류: 이미지 저장 실패 - {str(e)}")
-        return jsonify({'error': f'이미지 저장 실패: {str(e)}'}), 500
-
+        return {'error': f'이미지 저장 실패: {str(e)}'}
+    
     try:
         print("6. 썸네일 생성 시작...")
         thumb_img = upscaled_img.copy()
@@ -278,11 +250,32 @@ def process_image():
         print("   - 썸네일 생성 및 인코딩 완료")
     except Exception as e:
         print(f"오류: 썸네일 생성 실패 - {str(e)}")
-        return jsonify({'error': '썸네일 생성 실패'}), 500
-
+        return {'error': '썸네일 생성 실패'}
+    
     print("============ 이미지 처리 완료 ============")
-    return jsonify({'thumbnail': img_str, 'filename': filename})
+    return {'thumbnail': img_str, 'filename': filename}
 
+###############################
+# 비동기 엔드포인트 정의       #
+###############################
+@app.route('/process', methods=['POST'])
+async def process_image_async():
+    if 'file' not in request.files:
+        return jsonify({'error': '파일이 업로드되지 않았습니다.'}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': '선택된 파일이 없습니다.'}), 400
+    # blocking 작업을 별도 스레드에서 실행
+    result = await asyncio.to_thread(process_image_sync, file)
+    return jsonify(result)
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/full/<filename>')
+def full_image(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
 
 if __name__ == '__main__':
     print("Flask 서버 시작...")

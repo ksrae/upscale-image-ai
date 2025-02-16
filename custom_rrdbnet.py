@@ -1,4 +1,3 @@
-# custom_rrdbnet.py
 import torch
 import torch.nn as nn
 
@@ -42,7 +41,7 @@ class RRDBNet(nn.Module):
         self.conv_body = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
         self.lrelu = nn.LeakyReLU(negative_slope=0.2, inplace=True)
         
-        # 기존 PixelShuffle 블록 대신 conv_up1과 conv_up2 출력 채널을 그대로 64로 유지
+        # conv_up1, conv_up2 출력 채널 유지
         self.conv_up1 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
         self.conv_up2 = nn.Conv2d(num_feat, num_feat, 3, 1, 1)
         # 보간을 이용한 업샘플링 (각 단계 2배씩, 총 4배)
@@ -57,9 +56,9 @@ class RRDBNet(nn.Module):
         feat = feat + body_feat
         
         feat = self.lrelu(self.conv_up1(feat))
-        feat = self.upsample(feat)  # 2배 업샘플링
+        feat = self.upsample(feat)
         feat = self.lrelu(self.conv_up2(feat))
-        feat = self.upsample(feat)  # 다시 2배 업샘플링 (총 4배)
+        feat = self.upsample(feat)
         
         feat = self.lrelu(self.conv_hr(feat))
         out = self.conv_last(feat)
