@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>이미지 업스케일 & OCR</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        #thumbnails img { margin: 5px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <h1>이미지 업스케일 및 대사 OCR 처리</h1>
+    <!-- webkitdirectory 속성으로 폴더 및 다중 파일 선택 지원 -->
+    <input type="file" id="fileInput" webkitdirectory multiple>
+    <button id="processBtn">이미지 처리 시작</button>
+    <div>
+        <progress id="progressBar" value="0" max="100"></progress>
+        <span id="progressText"></span>
+    </div>
+    <div id="thumbnails"></div>
+
+    <script>
+        document.getElementById('processBtn').addEventListener('click', function() {
+            const input = document.getElementById('fileInput');
+            const files = input.files;
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const thumbnailsDiv = document.getElementById('thumbnails');
+
+            if (files.length === 0) {
+                alert("파일이나 폴더를 선택해주세요.");
+                return;
+            }
+            let processedCount = 0;
+            progressBar.value = 0;
+            progressText.textContent = `0 / ${files.length}`;
+            thumbnailsDiv.innerHTML = "";
+
+            Array.from(files).forEach(file => {
+                let formData = new FormData();
+                formData.append("file", file);
+                fetch('/process', { method: 'POST', body: formData })
+                    .then(response => response.json())
+                    .then(data => {
+                        processedCount++;
+                        progressBar.value = (processedCount / files.length) * 100;
+                        progressText.textContent = `${processedCount} / ${files.length}`;
+                        if (data.thumbnail) {
+                            let img = document.createElement('img');
+                            img.src = "data:image/jpeg;base64," + data.thumbnail;
+                            thumbnailsDiv.appendChild(img);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('파일 처리 중 에러:', error);
+                        processedCount++;
+                        progressBar.value = (processedCount / files.length) * 100;
+                        progressText.textContent = `${processedCount} / ${files.length}`;
+                    });
+            });
+        });
+    </script>
+</body>
+</html>
